@@ -1,134 +1,76 @@
-# UAV-path-planning-and-development
-# UAV Strategy Engine: Genetic Algorithm for Drone Surveillance
+# UAV Strategy Engine: Genetic Algorithm for Multi-Drone Surveillance
 
-**Course:** Artificial Intelligence, BSCS 5, Bahria University Lahore Campus
-**Assignment:** 2 (CLO4)
-**Group members:** _Name (Roll No), Name (Roll No), Name (Roll No)_
+Bahria University, Lahore Campus | BSCS 5 | Artificial Intelligence | Assignment 2 (CLO4)
 
-## About the project
+A modular, object-oriented Genetic Algorithm that plans waypoints, speeds and sensor
+power for a fleet of 3 UAVs over a 50 x 50 hazard grid. It balances four competing goals:
+priority-zone coverage, target detection, energy/time cost and hazard exposure,
+under hard constraints (range limit, time limit, no-fly zones).
 
-This project plans the flights of 3 drones (UAVs) over a 50 x 50 grid. The grid has:
-
-- 3 disaster zones that matter most (high priority),
-- 3 hazard areas (like strong wind or radiation),
-- 3 no-fly zones,
-- 30 hidden targets to find.
-
-Every drone starts and ends at the same base. The goals pull against each other: seeing more of the map costs battery and time and often means flying through hazards. So there is no single best answer. We use a Genetic Algorithm (GA) to find a good compromise, and we compare it with plain random search.
-
-## What the GA decides
-
-Each plan (chromosome) stores, for every drone and each of its 8 waypoints:
-
-- x and y position,
-- speed,
-- sensor power,
-- sensor on/off.
-
-That is 3 x 8 x 5 = 120 genes. The order of the waypoints is the order the drone flies them.
-
-**Fitness score (higher is better):**
-
-```
-F = 0.40 Coverage + 0.25 Detection - 0.12 Energy - 0.08 Time - 0.15 Hazard - Penalties
-```
-
-**Hard rules:** waypoints inside a no-fly zone are moved to the nearest free cell (repair). Crossing a no-fly zone, flying too far (170 cells) or taking too long (140 time units) is penalised, and the penalty gets stronger during the run.
-
-**Operators:**
-
-- Selection: tournament (or rank)
-- Crossover: segment swap, blend (geometric), whole-route swap
-- Mutation: position shift, move to a high-priority cell, swap two waypoints, speed/power change, sensor flip
-- Diversity: elitism, random newcomers when stuck, bigger mutation when the population gets too similar
-- Stop: maximum generations, or 60 generations without improvement
-
-## Project structure
+## Project layout
 
 ```
 uav-ga-strategy-engine/
-├── main.py              # one full run: GA + random search + figures 1 to 5
-├── experiments.py       # parameter tests + GA vs random search (figures 6 to 8)
-├── tuned_check.py       # GA with the best settings found (mutation 0.03, k = 5)
+├── main.py              # one full run: GA + random baseline + figures 1-5
+├── experiments.py       # sensitivity study + multi-seed GA vs random (figures 6-8)
 ├── requirements.txt
 ├── uav_ga/
-│   ├── config.py        # all settings in one place
-│   ├── environment.py   # the grid: priorities, hazards, no-fly zones, targets
-│   ├── chromosome.py    # how a plan is stored
-│   ├── fitness.py       # simulates a plan and scores it
+│   ├── config.py        # EnvConfig, FitnessConfig, GAConfig (every tunable number)
+│   ├── environment.py   # grid: priority map, hazard pockets, no-fly zones, targets, repair
+│   ├── chromosome.py    # hybrid real/binary chromosome
+│   ├── fitness.py       # simulation + multi-objective fitness + dynamic penalties
 │   ├── operators.py     # selection, crossover, mutation
-│   ├── ga.py            # the main GA loop
-│   ├── baseline.py      # random search for comparison
-│   └── visualize.py     # all the plots
-├── results/             # figures and result files
+│   ├── ga.py            # GA loop: init, elitism, adaptive mutation, immigrants, termination
+│   ├── baseline.py      # random search with equal evaluation budget
+│   └── visualize.py     # all plots
+├── results/             # generated figures + json summaries
 └── report/              # technical report
 ```
 
 ## How to run
 
-You need Python 3.9 or newer.
-
 ```bash
-# 1. go into the project folder
-cd uav-ga-strategy-engine
-
-# 2. (optional) make a virtual environment
-python -m venv venv
-venv\Scripts\activate          # Windows
-# source venv/bin/activate     # Mac / Linux
-
-# 3. install the libraries
+python -m venv venv && source venv/bin/activate      # optional
 pip install -r requirements.txt
-
-# 4. run the main simulation (about 15 to 60 seconds)
-python main.py
+python main.py                      # ~15 s, writes results/fig1..fig5 + main_run_summary.json
+python main.py --generations 200 --pop 100 --seed 3   # custom run
+python experiments.py --seeds 5     # ~10 min, writes results/fig6..fig8 + experiments.json
 ```
 
-Other commands:
+Python 3.9+ is needed. Runs are reproducible: the map is fixed by `EnvConfig.seed`, the GA by `GAConfig.seed`.
 
-```bash
-python main.py --generations 200 --pop 100 --seed 3   # your own settings
-python experiments.py --seeds 5                       # parameter tests, about 10 to 25 minutes
-python tuned_check.py                                 # GA with the tuned settings
-```
+## Design summary
 
-Results are repeatable: the map is fixed and each run uses a seed.
+**Chromosome (hybrid real + binary).** For each of 3 drones and 8 waypoints: `(x, y)` real,
+`speed` real, `power` real 0..1, `sensor_on` bit. Waypoint order = visiting order.
+Total 3 x 8 x 5 = 120 genes. Every drone starts and ends at the base.
 
-## Output figures
+**Fitness (maximise).**
+`F = 0.40*Coverage + 0.25*Detection - 0.12*Energy - 0.08*Time - 0.15*Hazard - Penalties`
+Each term is normalised to roughly 0..1. Weights live in `FitnessConfig`.
 
-All figures are saved in the `results/` folder.
+**Operators.**
+- Selection: tournament (size k = selection pressure) or linear rank.
+- Crossover (chosen per drone): segment swap, geometric/blend (BLX), whole-route swap.
+- Mutation: Gaussian waypoint shift, guided relocation to high-priority cells, waypoint-order swap,
+  speed/power jitter, sensor bit flip. Step size shrinks over time but is boosted when diversity collapses.
+- Diversity: elitism (2), random immigrants when stuck, diversity-triggered mutation boost.
 
-| File | What it shows |
-|------|---------------|
-| fig1_environment.png | The grid with priority zones, hazards, no-fly zones and targets |
-| fig2_convergence.png | Best, average and worst fitness over generations, plus diversity |
-| fig3_paths_generations.png | Best flight paths at generations 0, 10, 30, 60 and 120 |
-| fig4_heatmaps_generations.png | Coverage heatmaps at the same generations |
-| fig5_final_solution.png | The final routes and coverage heatmap |
-| fig6_ga_vs_random.png | GA vs random search with the same number of evaluations |
-| fig7_sensitivity.png | Effect of population size, mutation rate and selection pressure |
-| fig8_uniqueness.png | Best routes from every seed, GA vs random |
+**Constraints.** Waypoints inside no-fly zones are repaired to the nearest free cell.
+Flights crossing a no-fly zone, exceeding range or mission time are penalised, and
+the penalty weight grows during the run (dynamic penalty).
 
-## Main results
+**Termination.** Max generations, or no improvement for `patience` generations.
 
-Average of 5 seeds, same number of evaluations (about 7,000) for both:
+## Outputs
 
-| Measure | GA | Random search |
-|---------|----|---------------|
-| Final fitness | 0.166 | -0.698 |
-| Priority coverage | 0.60 | 0.32 |
-| Target detection | 0.70 | 0.32 |
-| Hazard exposure | 45.1 | 86.4 |
-| Runs crossing a no-fly zone | 0 of 5 | 4 of 5 |
-
-With mutation rate 0.03 and tournament size 5, the GA reached a fitness of 0.306 (very steady across seeds). Our first default (mutation 0.12) was too high.
-
-## Limitations
-
-- The fitness weights were chosen by reasoning, not tested.
-- Everything was tested on one fixed map and 5 seeds per setting.
-- The drone model is simple (straight legs, simple energy and sensor rules), so this shows the method works, not that the plans are ready to fly.
-
-## Report
-
-The full technical report is in the `report/` folder.
+| File | Content |
+|------|---------|
+| fig1_environment | Grid with priority zones, hazards, no-fly zones, targets |
+| fig2_convergence | Best / average / worst fitness + population diversity |
+| fig3_paths_generations | Best flight paths at generations 0, 10, 30, 60, 120 |
+| fig4_heatmaps_generations | Coverage heatmaps at the same generations |
+| fig5_final_solution | Final routes + coverage heatmap |
+| fig6_ga_vs_random | GA vs random search (equal evaluations, several seeds) |
+| fig7_sensitivity | Population size, mutation rate, selection pressure |
+| fig8_uniqueness | Best routes from every seed, GA vs random |
